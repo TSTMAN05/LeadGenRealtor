@@ -26,7 +26,7 @@ export default function AddressAutocomplete({
   useAddressAutocomplete(inputRef, onPlaceSelect);
 
   const inputClasses = variant === "compact"
-    ? "w-full px-4 py-3 border-0 focus:ring-0 focus:outline-none text-gray-900 placeholder:text-gray-400 bg-transparent"
+    ? "w-full px-4 py-0 border-0 focus:ring-0 focus:outline-none text-gray-900 placeholder:text-gray-400 bg-transparent text-left"
     : "w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-gray-900 transition-colors duration-200 placeholder:text-gray-400";
 
   return (

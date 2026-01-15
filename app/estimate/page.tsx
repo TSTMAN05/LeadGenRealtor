@@ -36,6 +36,13 @@ interface ParsedAddress {
 
 type FormStatus = "idle" | "loading" | "success" | "error";
 
+interface FormErrors {
+  name?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+}
+
 function parseAddress(fullAddress: string): ParsedAddress {
   // Try to parse address into street and city/state/zip
   const parts = fullAddress.split(",").map(p => p.trim());
@@ -78,6 +85,8 @@ function EstimateContent() {
     lng: number | null;
   } | null>(null);
   const [location, setLocation] = useState<GeoLocation | null>(null);
+  const [errors, setErrors] = useState<FormErrors>({});
+  const formRef = useRef<HTMLFormElement>(null);
 
   // Fetch geo location on mount
   useEffect(() => {
@@ -142,16 +151,109 @@ function EstimateContent() {
     }
   }, [loaded, formData.lat, formData.lng, formData.address]);
 
+  const validateField = (name: string, value: string): string | undefined => {
+    switch (name) {
+      case "name":
+        if (!value.trim()) return "This field is required";
+        break;
+      case "email":
+        if (!value.trim()) return "This field is required";
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(value)) return "Please enter a valid email address";
+        break;
+      case "phone":
+        if (!value.trim()) return "This field is required";
+        const digitsOnly = value.replace(/\D/g, "");
+        if (digitsOnly.length < 10) return "Please enter a valid phone number";
+        break;
+      case "address":
+        if (!value.trim()) return "This field is required";
+        break;
+    }
+    return undefined;
+  };
+
+  const formatPhoneNumber = (value: string): string => {
+    // Remove all non-digit characters
+    const digits = value.replace(/\D/g, "");
+
+    // Limit to 10 digits
+    const limitedDigits = digits.slice(0, 10);
+
+    // Format based on length
+    if (limitedDigits.length <= 3) {
+      return limitedDigits ? `(${limitedDigits}` : "";
+    } else if (limitedDigits.length <= 6) {
+      return `(${limitedDigits.slice(0, 3)}) ${limitedDigits.slice(3)}`;
+    } else {
+      return `(${limitedDigits.slice(0, 3)}) ${limitedDigits.slice(3, 6)}-${limitedDigits.slice(6)}`;
+    }
+  };
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+
+    // Special handling for phone field
+    if (name === "phone") {
+      const formattedPhone = formatPhoneNumber(value);
+      setFormData((prev) => ({ ...prev, [name]: formattedPhone }));
+    } else {
+      setFormData((prev) => ({ ...prev, [name]: value }));
+    }
+
+    // Clear error for this field when user starts typing
+    if (errors[name as keyof FormErrors]) {
+      setErrors((prev) => {
+        const newErrors = { ...prev };
+        delete newErrors[name as keyof FormErrors];
+        return newErrors;
+      });
+    }
   };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+
+    // Validate all required fields
+    const newErrors: FormErrors = {};
+    const nameError = validateField("name", formData.name);
+    const emailError = validateField("email", formData.email);
+    const phoneError = validateField("phone", formData.phone);
+    const addressError = validateField("address", formData.address);
+
+    if (nameError) newErrors.name = nameError;
+    if (emailError) newErrors.email = emailError;
+    if (phoneError) newErrors.phone = phoneError;
+    if (addressError) newErrors.address = addressError;
+
+    // If there are errors, set them and scroll to first error
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors);
+
+      // Find first error field and scroll to it
+      const firstErrorField = Object.keys(newErrors)[0];
+      const element = document.getElementById(firstErrorField);
+      if (element) {
+        element.scrollIntoView({ behavior: "smooth", block: "center" });
+        element.focus();
+      }
+      return;
+    }
+
     setStatus("loading");
 
     try {
+      // Strip formatting from phone before submitting
+      const phoneDigits = formData.phone.replace(/\D/g, "");
+
+      console.log("Submitting form data:", {
+        address: formData.address,
+        firstName: formData.name,
+        email: formData.email,
+        phone: phoneDigits,
+        propertyType: formData.propertyType,
+      });
+
       const response = await fetch("/api/lead", {
         method: "POST",
         headers: {
@@ -161,7 +263,8 @@ function EstimateContent() {
           address: formData.address,
           firstName: formData.name,
           email: formData.email,
-          phone: formData.phone,
+          phone: phoneDigits,
+          sellingTimeline: "curious", // Default for estimate form
           propertyType: formData.propertyType,
           unitNumber: formData.unitNumber,
           bedrooms: formData.bedrooms,
@@ -181,7 +284,10 @@ function EstimateContent() {
         }),
       });
 
+      console.log("API response status:", response.status);
+
       if (response.ok) {
+        console.log("Form submitted successfully");
         setSubmittedAddress({
           address: formData.address,
           lat: formData.lat,
@@ -189,9 +295,12 @@ function EstimateContent() {
         });
         setStatus("success");
       } else {
+        const errorData = await response.json();
+        console.error("API error response:", errorData);
         setStatus("error");
       }
-    } catch {
+    } catch (error) {
+      console.error("Form submission error:", error);
       setStatus("error");
     }
   };
@@ -274,7 +383,7 @@ function EstimateContent() {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-8">
+        <form ref={formRef} onSubmit={handleSubmit} className="space-y-8">
           {/* Contact Information Section */}
           <div>
             <h2 className="text-lg font-bold text-gray-900 mb-4">Contact Information</h2>
@@ -289,10 +398,16 @@ function EstimateContent() {
                   name="name"
                   value={formData.name}
                   onChange={handleChange}
-                  required
                   placeholder="Your full name"
-                  className="w-full px-4 py-3 border border-gray-200 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 transition-colors duration-200 placeholder:text-gray-400"
+                  className={`w-full px-4 py-3 border rounded-md focus:ring-2 text-gray-900 transition-colors duration-200 placeholder:text-gray-400 ${
+                    errors.name
+                      ? "border-red-500 bg-red-50 focus:ring-red-500 focus:border-red-500"
+                      : "border-gray-200 focus:ring-blue-500 focus:border-blue-500"
+                  }`}
                 />
+                {errors.name && (
+                  <p className="mt-1 text-sm text-red-500">{errors.name}</p>
+                )}
               </div>
 
               <div>
@@ -305,15 +420,21 @@ function EstimateContent() {
                   name="email"
                   value={formData.email}
                   onChange={handleChange}
-                  required
                   placeholder="your@email.com"
-                  className="w-full px-4 py-3 border border-gray-200 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 transition-colors duration-200 placeholder:text-gray-400"
+                  className={`w-full px-4 py-3 border rounded-md focus:ring-2 text-gray-900 transition-colors duration-200 placeholder:text-gray-400 ${
+                    errors.email
+                      ? "border-red-500 bg-red-50 focus:ring-red-500 focus:border-red-500"
+                      : "border-gray-200 focus:ring-blue-500 focus:border-blue-500"
+                  }`}
                 />
+                {errors.email && (
+                  <p className="mt-1 text-sm text-red-500">{errors.email}</p>
+                )}
               </div>
 
               <div>
                 <label htmlFor="phone" className="block text-sm font-medium text-blue-500 mb-1.5">
-                  Phone
+                  Phone <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="tel"
@@ -322,8 +443,15 @@ function EstimateContent() {
                   value={formData.phone}
                   onChange={handleChange}
                   placeholder="(555) 123-4567"
-                  className="w-full px-4 py-3 border border-gray-200 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 transition-colors duration-200 placeholder:text-gray-400"
+                  className={`w-full px-4 py-3 border rounded-md focus:ring-2 text-gray-900 transition-colors duration-200 placeholder:text-gray-400 ${
+                    errors.phone
+                      ? "border-red-500 bg-red-50 focus:ring-red-500 focus:border-red-500"
+                      : "border-gray-200 focus:ring-blue-500 focus:border-blue-500"
+                  }`}
                 />
+                {errors.phone && (
+                  <p className="mt-1 text-sm text-red-500">{errors.phone}</p>
+                )}
               </div>
             </div>
           </div>

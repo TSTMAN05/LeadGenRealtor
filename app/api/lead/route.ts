@@ -24,6 +24,10 @@ interface LeadData {
 export async function POST(request: NextRequest) {
   try {
     const body: LeadData = await request.json();
+
+    // Log received data for debugging
+    console.log("Received lead data:", JSON.stringify(body, null, 2));
+
     const {
       address,
       firstName,
@@ -45,13 +49,21 @@ export async function POST(request: NextRequest) {
     // Honeypot check - if website field is filled, it's a bot
     if (website) {
       // Return 200 silently to trick bots
+      console.log("Bot detected via honeypot");
       return NextResponse.json({ success: true });
     }
 
-    // Validate required fields
-    if (!address || !firstName || !email || !phone || !sellingTimeline || !propertyType) {
+    // Validate required fields - note: sellingTimeline is optional for estimate form
+    if (!address || !firstName || !email || !phone || !propertyType) {
+      console.error("Validation failed - missing required fields:", {
+        address: !!address,
+        firstName: !!firstName,
+        email: !!email,
+        phone: !!phone,
+        propertyType: !!propertyType,
+      });
       return NextResponse.json(
-        { error: "All fields are required" },
+        { error: "Required fields: address, firstName, email, phone, propertyType" },
         { status: 400 }
       );
     }
@@ -59,9 +71,13 @@ export async function POST(request: NextRequest) {
     // Default relationship to "homeowner" if not provided
     const relationshipValue = relationship || "homeowner";
 
+    // Default sellingTimeline if not provided (for estimate form)
+    const sellingTimelineValue = sellingTimeline || "curious";
+
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
+      console.error("Invalid email format:", email);
       return NextResponse.json(
         { error: "Invalid email format" },
         { status: 400 }
@@ -70,12 +86,13 @@ export async function POST(request: NextRequest) {
 
     const hubspotToken = process.env.HUBSPOT_TOKEN;
     if (!hubspotToken) {
-      console.error("HUBSPOT_TOKEN is not configured");
+      console.error("HUBSPOT_TOKEN is not configured in environment variables");
       return NextResponse.json(
         { error: "Server configuration error" },
         { status: 500 }
       );
     }
+    console.log("HubSpot token found:", hubspotToken.substring(0, 10) + "...");
 
     // Build address with coordinates if available
     const fullAddress = lat && lng
@@ -116,10 +133,12 @@ export async function POST(request: NextRequest) {
       firstname: firstName,
       phone: phone,
       address: fullAddress,
-      selling_timeline: timelineMap[sellingTimeline] || sellingTimeline,
+      selling_timeline: timelineMap[sellingTimelineValue] || sellingTimelineValue,
       property_type: propertyTypeMap[propertyType] || propertyType,
       relationship_to_property: relationshipMap[relationshipValue] || relationshipValue,
     };
+
+    console.log("HubSpot properties to send:", JSON.stringify(hubspotProperties, null, 2));
 
     // Add visitor location data if available
     if (visitorCity) {
@@ -139,6 +158,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Send to HubSpot
+    console.log("Sending to HubSpot...");
     const hubspotResponse = await fetch(
       "https://api.hubapi.com/crm/v3/objects/contacts",
       {
@@ -153,12 +173,16 @@ export async function POST(request: NextRequest) {
       }
     );
 
+    console.log("HubSpot response status:", hubspotResponse.status);
+
     if (hubspotResponse.ok) {
+      console.log("Successfully created contact in HubSpot");
       return NextResponse.json({ success: true });
     }
 
     // Handle HubSpot conflict (contact already exists)
     if (hubspotResponse.status === 409) {
+      console.log("Contact already exists, attempting to update...");
       // Contact exists, try to update instead
       const conflictData = await hubspotResponse.json();
       const existingContactId = conflictData?.message?.match(/(\d+)/)?.[1];
@@ -193,15 +217,17 @@ export async function POST(request: NextRequest) {
     }
 
     const errorData = await hubspotResponse.json();
-    console.error("HubSpot API error:", errorData);
+    console.error("HubSpot API error response:", JSON.stringify(errorData, null, 2));
+    console.error("HubSpot API status:", hubspotResponse.status);
     return NextResponse.json(
-      { error: "Failed to submit lead" },
+      { error: "Failed to submit lead", details: errorData },
       { status: 500 }
     );
   } catch (error) {
     console.error("API route error:", error);
+    console.error("Error stack:", error instanceof Error ? error.stack : "No stack trace");
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "Internal server error", details: error instanceof Error ? error.message : "Unknown error" },
       { status: 500 }
     );
   }
